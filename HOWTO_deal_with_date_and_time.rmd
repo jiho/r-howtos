@@ -1,0 +1,246 @@
+```{r echo=FALSE}
+# options for knitr
+library("knitr")
+opts_chunk$set(tidy=FALSE,  # do not reformat code
+               comment="",  # comment character before console output
+               error=TRUE   # continue on errors
+)
+```
+
+# How to deal with date and time in R
+
+## Date and time representation in R
+
+A date + time is represented in R as an object of class `POSIXct`. A date is represented as an object of class `Date`.
+
+```{r}
+# current time
+now <- Sys.time()
+class(now)
+# current date
+today <- Sys.Date()
+class(today)
+```
+
+These objects store the number of seconds (for `POSIXct`) or days (for `Date`) since January 1st 1970 at midnight. When printed on the console, they are displayed in a human-readable format along the [ISO 8601 standard](http://en.wikipedia.org/wiki/ISO_8601)
+
+```{r}
+# display it in ISO 8601 format
+print(now)
+# internally, that is just a number of seconds
+as.numeric(now)
+
+# same for dates
+print(today)
+# except it stores a number of days
+as.numeric(today)
+```
+
+Usually we get date/time information either as text or as a number of seconds/days since a given reference (also called "Julian" date/time). The first step is therefore to convert those representations into an R object of class `POSIXct` or `Date`.
+
+
+## Importing textual date and time
+
+If the date/time is in ISO 8601 format already (i.e. YYYY-MM-DD HH:MM:SS), R can parse it directly. It just adds the current time zone of your computer by default. So the easiest was to get your date/time data into R is to format it this way from the start.
+
+```{r}
+x <- as.POSIXct("2014-09-24 15:23:10")
+class(x)
+print(x)
+x <- as.Date("2014-09-24")
+class(x)
+print(x)
+```
+
+If it is in a different format, `as.POSIXct` fails and you need to parse it manually.
+
+```{r}
+as.POSIXct("09/24/2014 15-23-10")
+```
+
+The function `strptime` can do it. You need to specify precisely the format the date/time is written in. But we will use the `lubridate` package which makes things much easier. In `lubridate` you just have to specify the *order* in which the date/time elements (year, month, day, hour, minute, second) are and the function figures out the rest (spacing separators, wether the year has 2 or 4 digits, character or numeric representation of month, etc.).
+
+```{r}
+library("lubridate")
+parse_date_time("2014-09-24 15:23:10", orders="ymd hms")
+parse_date_time("09/24/2014 15-23-10", orders="mdy hms")
+parse_date_time("24 09 2014 15 23 10", orders="dmy hms")
+parse_date_time("24-09-14 15-23-10", orders="dmy hms")
+parse_date_time("Sep 24, 2014 15:23:10", orders="mdy hms")
+```
+
+Note that `parse_date_time` always assigns the "UTC" time zone, which makes it more consistent than `strptime` or `as.POSIXct` by default. "UTC" stand for "[Coordinated Universal Time](http://en.wikipedia.org/wiki/Coordinated_Universal_Time)" and is the time at the 0 meridian; somewhat similar to Greenwich Mean Time or "GMT". See below regarding how to deal with time zones.
+
+It also works with dates of course.
+
+```{r}
+parse_date_time("09/24/2014", orders="mdy")
+parse_date_time("24 09 2014", orders="dmy")
+```
+
+But it still creates a `POSIXct` object (notice the "UTC" time zone added above), which you have to force into a `Date` object if you want to make sure it behaves as a date.
+
+```{r}
+x <- parse_date_time("09/24/2014", orders="mdy")
+print(x)
+class(x)
+x <- as.Date(x)
+print(x)
+class(x)
+```
+
+`lubridate` even has some shortcut functions for common orders in which date and times are specified. These functions are sometimes even cleverer than their `parse_date_time` counterparts (they deal with AM/PM directly for example).
+
+```{r}
+x <- "2014-09-24 15:23:10"
+parse_date_time(x, orders="ymd hms")
+ymd_hms(x)	# ISO
+mdy_hms("09/14/2014 3:23:10 PM") # USA
+dmy_hms("14-09-2014 15:23:10")   # most of the rest of the world
+
+ymd("2014-09-24")
+mdy("09/14/2014")
+dmy("14-09-2014")
+```
+
+For more complex formats, see `?parse_date_time`.
+
+
+## Computing with date and times
+
+Since `POSIXct` objects are, internally, a number of seconds, it is possible to add or subtract seconds from them.
+
+```{r}
+x <- ymd_hms("2014-09-24 15:23:10")
+x + 1
+x - 1
+# add an hour
+x + 3600
+# add a day
+x + 3600 * 24
+```
+
+Dates are similar except the computation is done in days.
+
+```{r}
+x <- as.Date("2014-09-24")
+x + 1
+x - 1
+# add years
+x + 364
+x + 364 * 2
+```
+
+For more advanced computation, see the concept of "periods" in `lubridate` (`?Period-class`, `?lubridate`).
+
+
+## Importing a julian date and time
+
+A "julian" date or time is a number of days or hours or seconds elapsed since a given reference. The ability to compute with dates, as shown above, makes it trivial to import those as true `POSIXct` or `Date` objects.
+
+Let us consider that we are given a vector of dates in the form or the number of days since the start of 2014. Here is how to convert it into dates
+
+```{r}
+days_passed <- c(10, 22, 45, 68, 85, 120, 145)
+
+# we need to know the origin, and make it into a Date object
+origin <- as.Date("2014-01-01")
+# and the actual dates are
+origin + days_passed
+```
+
+Similarly with a number of seconds since the start of an event
+
+```{r}
+seconds_elapsed <- c(477, 2135, 2474, 2546, 2891, 3846, 7284)
+start <- ymd_hms("2014-09-24 15:23:10")
+start + seconds_elapsed
+```
+
+Sometimes, the julian date is in the form of decimal days. It therefore represents a date but also a time during the day. In which case decimal days need to be converted into second before being added to the date+time of origin
+
+```{r}
+dec_days_passed <- c(4.1356, 167.8187, 168.11034, 181.02103, 189.93808)
+origin <- ymd_hms("2014-01-01 00:00:00")
+# NB: the origin is treated as a date and time here, since the decimal days also hold information about time
+origin + dec_days_passed * 3600 * 24
+```
+
+
+## Extracting elements from a date/time
+
+Once your date/time data in in `POSIXct` format, it is easy to extract parts of it (i.e. the hour of the day to find out wether it is day or night, the month to find out the season, etc.). Again, the `?format` function in the `base` package can do this but `lubridate` provides easier to use alternatives.
+
+```{r}
+x <- ymd_hms("2014-09-24 15:23:10")
+# base package version (always returns a character string)
+format(x, "%Y") # year
+format(x, "%m") # month
+format(x, "%Y%m%d")
+# lubridate version (return numbers when appropriate)
+year(x)
+month(x)
+day(x)
+yday(x)	# number of days since start of year
+weekdays(x)
+week(x)
+hour(x)
+minute(x)
+second(x)
+```
+
+
+## Converting between time zones
+
+If your time is recorded in local time and you are not along the UTC time zone, you should specify the time zone when importing the date+time. Then converting it to another time zone is done with `with_tz`.
+
+```{r}
+x <- ymd_hms("2014-09-24 15:23:10", tz="Europe/Paris")
+x
+# what time was in in New-York
+with_tz(x, tz="America/New_York")
+# or Tokyo
+with_tz(x, tz="Asia/Tokyo")
+```
+
+A common task is to convert from local to UTC time, to synchronise observations in various time zones or compute celestial patterns for example. This is of course possible with
+
+```{r}
+with_tz(x, tz="UTC")
+```
+
+See the list of human-readable time zones with `olson_time_zones()` (or `OlsonNames()`).
+
+
+## Using fractional seconds
+
+Objects of class `POSIXct` can deal and compute with fractional seconds but do not print them by default
+
+```{r}
+x <- ymd_hms("2014-09-24 15:23:10")
+y <- x + 0.5
+y
+# the additional half second is not printed but is there since adding another 0.6 seconds rolls over to the next second
+y + 0.6
+```
+
+To show them, set the appropriate `options` slot
+
+```{r}
+x <- ymd_hms("2014-09-24 15:23:10")
+x + 0.457
+options(digits.secs=3)
+x + 0.457
+options(digits.secs=5)
+x + 0.45756
+options(digits.secs=0)
+```
+
+---
+
+Jean-Olivier Irisson  
+Last edited on `r library("lubridate"); today()`  
+http://www.obs-vlfr.fr/~irisson/
+
+
+
